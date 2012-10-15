@@ -172,14 +172,11 @@ serveConnection :: Settings
                 -> Cleaner
                 -> Port -> Application -> Connection -> SockAddr-> IO ()
 serveConnection settings cleaner port app conn remoteHost' =
-    runResourceT serveConnection'
+    serveConnection'
   where
-    innerRunResourceT
-        | settingsResourceTPerRequest settings = lift . runResourceT
-        | otherwise = id
     th = threadHandle cleaner
 
-    serveConnection' :: ResourceT IO ()
+    serveConnection' :: IO ()
     serveConnection' = serveConnection'' $ connSource conn th
 
     serveConnection'' fromClient = do
@@ -187,24 +184,20 @@ serveConnection settings cleaner port app conn remoteHost' =
         case settingsIntercept settings env of
             Nothing -> do
                 -- Let the application run for as long as it wants
-                liftIO $ T.pause th
-                keepAlive <- innerRunResourceT $ do
-                    res <- app env
+                T.pause th
+                res <- app env
 
-                    liftIO $ T.resume th
-                    sendResponse cleaner env conn res
+                T.resume th
+                keepAlive <- sendResponse cleaner env conn res
 
                 -- flush the rest of the request body
                 requestBody env $$ CL.sinkNull
-                ResumableSource fromClient' _ <- liftIO getSource
+
+                ResumableSource fromClient' _ <- getSource
 
                 when keepAlive $ serveConnection'' fromClient'
-            Just intercept -> do
-                liftIO $ T.pause th
-                ResumableSource fromClient' _ <- liftIO getSource
-                intercept fromClient' conn
 
-connSource :: Connection -> T.Handle -> Source (ResourceT IO) ByteString
+connSource :: Connection -> T.Handle -> Source IO ByteString
 connSource Connection { connRecv = recv } th = src
   where
     src = do
