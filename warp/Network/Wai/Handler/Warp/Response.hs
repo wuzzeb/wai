@@ -7,7 +7,7 @@ module Network.Wai.Handler.Warp.Response (
     sendResponse
   ) where
 
-import Blaze.ByteString.Builder (fromByteString, Builder, toByteStringIO, flush)
+import Blaze.ByteString.Builder (fromByteString, Builder, toByteStringIO, flush, copyByteString)
 import Blaze.ByteString.Builder.HTTP (chunkedTransferEncoding, chunkedTransferTerminator)
 import Control.Applicative
 import Control.Exception
@@ -37,7 +37,7 @@ sendResponse :: Cleaner -> Request -> Connection -> Response
 ----------------------------------------------------------------
 
 sendResponse cleaner req conn (ResponseFile s hs path mpart) =
-    headerAndLength >>= sendResponse'
+    liftIO $ headerAndLength >>= sendResponse'
   where
     th = threadHandle cleaner
     headerAndLength = case (readInt <$> checkLength hs, mpart) of
@@ -67,32 +67,11 @@ sendResponse cleaner req conn (ResponseFile s hs path mpart) =
         (isPersist,_) = infoFromRequest req
 
     sendResponse' (Left (_ :: SomeException)) =
-        sendResponse cleaner req conn notFound
-      where
-        notFound = responseLBS H.status404 [(H.hContentType, "text/plain")] "File not found"
+        sendResponseBuilder cleaner req conn H.status404 [(H.hContentType, "text/plain")] $ copyByteString "File not found"
 
 ----------------------------------------------------------------
 
-sendResponse cleaner req conn (ResponseBuilder s hs b)
-  | hasBody s req = liftIO $ do
-      flip toByteStringIO body $ \bs -> do
-          connSendAll conn bs
-          T.tickle th
-      return isKeepAlive
-  | otherwise = liftIO $ do
-      connSendAll conn $ composeHeader version s hs
-      T.tickle th
-      return isPersist
-  where
-    th = threadHandle cleaner
-    header = composeHeaderBuilder version s hs needsChunked
-    body
-      | needsChunked = header `mappend` chunkedTransferEncoding b
-                              `mappend` chunkedTransferTerminator
-      | otherwise    = header `mappend` b
-    version = httpVersion req
-    reqinfo@(isPersist,_) = infoFromRequest req
-    (isKeepAlive, needsChunked) = infoFromResponse hs reqinfo
+sendResponse cleaner req conn (ResponseBuilder s hs b) = sendResponseBuilder cleaner req conn s hs b
 
 ----------------------------------------------------------------
 
@@ -114,7 +93,7 @@ sendResponse cleaner req conn (ResponseSource s hs bodyFlush)
     cbody = if needsChunked then body $= chunk else body
     -- FIXME perhaps alloca a buffer per thread and reuse that in all
     -- functions below. Should lessen greatly the GC burden (I hope)
-    chunk :: Conduit Builder (ResourceT IO) Builder
+    chunk :: Monad m => Conduit Builder m Builder
     chunk = await >>= maybe (yield chunkedTransferTerminator) (\x -> yield (chunkedTransferEncoding x) >> chunk)
     version = httpVersion req
     reqinfo@(isPersist,_) = infoFromRequest req
@@ -123,8 +102,40 @@ sendResponse cleaner req conn (ResponseSource s hs bodyFlush)
 ----------------------------------------------------------------
 ----------------------------------------------------------------
 
+sendResponseBuilder :: MonadIO m
+                    => Cleaner
+                    -> Request
+                    -> Connection
+                    -> H.Status
+                    -> H.ResponseHeaders
+                    -> Builder
+                    -> m Bool
+sendResponseBuilder cleaner req conn s hs b
+  | hasBody s req = liftIO $ do
+      flip toByteStringIO body $ \bs -> do
+          connSendAll conn bs
+          T.tickle th
+      return isKeepAlive
+  | otherwise = liftIO $ do
+      connSendAll conn $ composeHeader version s hs
+      T.tickle th
+      return isPersist
+  where
+    th = threadHandle cleaner
+    header = composeHeaderBuilder version s hs needsChunked
+    body
+      | needsChunked = header `mappend` chunkedTransferEncoding b
+                              `mappend` chunkedTransferTerminator
+      | otherwise    = header `mappend` b
+    version = httpVersion req
+    reqinfo@(isPersist,_) = infoFromRequest req
+    (isKeepAlive, needsChunked) = infoFromResponse hs reqinfo
+
+----------------------------------------------------------------
+----------------------------------------------------------------
+
 -- | Use 'connSendAll' to send this data while respecting timeout rules.
-connSink :: Connection -> T.Handle -> Sink ByteString (ResourceT IO) ()
+connSink :: MonadIO m => Connection -> T.Handle -> Sink ByteString m ()
 connSink Connection { connSendAll = send } th =
     sink
   where

@@ -183,7 +183,7 @@ serveConnection settings cleaner port app conn remoteHost' =
     serveConnection' = serveConnection'' $ connSource conn th
 
     serveConnection'' fromClient = do
-        (env, getSource) <- parseRequest conn port remoteHost' fromClient
+        (env, getSource) <- liftIO $ parseRequest conn port remoteHost' fromClient
         case settingsIntercept settings env of
             Nothing -> do
                 -- Let the application run for as long as it wants
@@ -192,19 +192,20 @@ serveConnection settings cleaner port app conn remoteHost' =
                     res <- app env
 
                     liftIO $ T.resume th
-                    sendResponse cleaner env conn res
+                    keepAlive <- sendResponse cleaner env conn res
 
-                -- flush the rest of the request body
-                requestBody env $$ CL.sinkNull
+                    -- flush the rest of the request body
+                    requestBody env $$ CL.sinkNull
+
+                    return keepAlive
                 ResumableSource fromClient' _ <- liftIO getSource
 
                 when keepAlive $ serveConnection'' fromClient'
             Just intercept -> do
-                liftIO $ T.pause th
-                ResumableSource fromClient' _ <- liftIO getSource
-                intercept fromClient' conn
+                ResumableSource fromClient' _ <- liftIO $ T.pause th >> getSource
+                intercept (transPipe liftIO fromClient') conn
 
-connSource :: Connection -> T.Handle -> Source (ResourceT IO) ByteString
+connSource :: Connection -> T.Handle -> Source IO ByteString
 connSource Connection { connRecv = recv } th = src
   where
     src = do

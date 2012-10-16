@@ -30,8 +30,8 @@ maxTotalHeaderLength :: Int
 maxTotalHeaderLength = 50 * 1024
 
 parseRequest :: Connection -> Port -> SockAddr
-             -> Source (ResourceT IO) ByteString
-             -> ResourceT IO (Request, IO (ResumableSource (ResourceT IO) ByteString))
+             -> Source IO ByteString
+             -> IO (Request, IO (ResumableSource IO ByteString))
 parseRequest conn port remoteHost' src1 = do
     (src2, headers') <- src1 $$+ takeHeaders
     parseRequest' conn port headers' remoteHost' src2
@@ -55,8 +55,8 @@ parseRequest' :: Connection
               -> Port
               -> [ByteString]
               -> SockAddr
-              -> ResumableSource (ResourceT IO) ByteString -- FIXME was buffered
-              -> ResourceT IO (Request, IO (ResumableSource (ResourceT IO) ByteString))
+              -> ResumableSource IO ByteString -- FIXME was buffered
+              -> IO (Request, IO (ResumableSource IO ByteString))
 parseRequest' _ _ [] _ _ = throwIO $ NotEnoughLines []
 parseRequest' conn port (firstLine:otherLines) remoteHost' src = do
     (method, rpath', gets, httpversion) <- parseFirst firstLine
@@ -96,7 +96,7 @@ parseRequest' conn port (firstLine:otherLines) remoteHost' src = do
             , requestHeaders = heads
             , isSecure = False
             , remoteHost = remoteHost'
-            , requestBody = rbody
+            , requestBody = transPipe liftIO rbody
             , vault = mempty
             }, getSource)
 
@@ -109,7 +109,7 @@ takeUntil c bs =
 
 {-# INLINE parseFirst #-} -- FIXME is this inline necessary? the function is only called from one place and not exported
 parseFirst :: ByteString
-           -> ResourceT IO (ByteString, ByteString, ByteString, H.HttpVersion)
+           -> IO (ByteString, ByteString, ByteString, H.HttpVersion)
 parseFirst s =
     case filter (not . S.null) $ S.splitWith (\c -> c == 32 || c == 9) s of  -- ' '
         (method:query:http'') -> do
@@ -140,14 +140,14 @@ data THStatus = THStatus
     BSEndo -- bytestrings to be prepended
 
 {-# INLINE takeHeaders #-}
-takeHeaders :: Sink ByteString (ResourceT IO) [ByteString]
+takeHeaders :: Sink ByteString IO [ByteString]
 takeHeaders =
     await >>= maybe (throwIO ConnectionClosedByPeer) (push (THStatus 0 id id))
 
-close :: Sink ByteString (ResourceT IO) a
+close :: Sink ByteString IO a
 close = throwIO IncompleteHeaders
 
-push :: THStatus -> ByteString -> Pipe ByteString ByteString Void () (ResourceT IO) [ByteString]
+push :: THStatus -> ByteString -> Pipe ByteString ByteString Void () IO [ByteString]
 push (THStatus len lines prepend) bs
         -- Too many bytes
         | len > maxTotalHeaderLength = throwIO OverLargeHeader
