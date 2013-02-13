@@ -1,5 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE CPP #-}
 
 module Network.Wai.Handler.Warp.Request where
 
@@ -24,6 +26,9 @@ import Network.Wai.Handler.Warp.Conduit
 import Network.Wai.Handler.Warp.ReadInt
 import Network.Wai.Handler.Warp.Types
 import Prelude hiding (lines)
+#if MIN_VERSION_conduit(1, 0, 0)
+import qualified Data.Conduit.Internal as CI
+#endif
 
 -- FIXME come up with good values here
 maxTotalHeaderLength :: Int
@@ -96,7 +101,12 @@ parseRequest' conn port (firstLine:otherLines) remoteHost' src = do
             , requestHeaders = heads
             , isSecure = False
             , remoteHost = remoteHost'
-            , requestBody = rbody
+            , requestBody =
+#if MIN_VERSION_conduit(1, 0, 0)
+                CI.ConduitM $ CI.pipeL (return ()) $ CI.unConduitM rbody
+#else
+                rbody
+#endif
             , vault = mempty
             }, getSource)
 

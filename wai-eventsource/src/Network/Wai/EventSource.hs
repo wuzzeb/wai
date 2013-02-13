@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-|
     A WAI adapter to the HTML5 Server-Sent Events API.
 -}
@@ -25,20 +26,21 @@ import Network.Wai.EventSource.EventStream
 eventSourceAppChan :: Chan ServerEvent -> Application
 eventSourceAppChan chan _ = do
   chan' <- liftIO $ dupChan chan
-  return $ response chanToSource chan'
+  return $ response $ chanToSource chan'
 
 -- | Make a new WAI EventSource application reading events from
 -- the given source.
 eventSourceAppSource :: Source (ResourceT IO) ServerEvent -> Application
-eventSourceAppSource src _ = return $ response sourceToSource src
+eventSourceAppSource src _ = return $ response $ sourceToSource src
 
 -- | Make a new WAI EventSource application reading events from
 -- the given IO action.
 eventSourceAppIO :: IO ServerEvent -> Application
-eventSourceAppIO act _ = return $ response ioToSource act
+eventSourceAppIO act _ = return $ response $ ioToSource act
 
-response :: (a -> Source (ResourceT IO) (Flush Builder)) -> a -> Response
-response f a = ResponseSource status200 [("Content-Type", "text/event-stream")] $ f a
+response :: Source (ResourceT IO) (Flush Builder)
+         -> Response
+response = ResponseSource status200 [("Content-Type", "text/event-stream")]
 
 chanToSource :: Chan ServerEvent -> Source (ResourceT IO) (Flush Builder)
 chanToSource = ioToSource . readChan

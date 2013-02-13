@@ -18,14 +18,14 @@ module Network.Wai.Middleware.Jsonp (jsonp) where
 import Network.Wai
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as B8
-import Blaze.ByteString.Builder (copyByteString)
+import Blaze.ByteString.Builder (Builder, copyByteString)
 import Blaze.ByteString.Builder.Char8 (fromChar)
 import Data.Monoid (mappend)
 import Control.Monad (join)
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString as S
 import qualified Data.Conduit as C
-import qualified Data.Conduit.List as CL
+import Network.HTTP.Types (Status, ResponseHeaders)
 
 -- | Wrap json responses in a jsonp callback.
 --
@@ -78,11 +78,17 @@ jsonp app env = do
             _ -> Nothing
     fixHeaders = changeVal "Content-Type" "text/javascript"
 
+    addCallback :: Monad m
+                => ByteString
+                -> Status
+                -> ResponseHeaders
+                -> C.Source (C.ResourceT IO) (C.Flush Builder)
+                -> m Response
     addCallback cb s hs b =
-        return $ ResponseSource s hs $
-            CL.sourceList [C.Chunk $ copyByteString cb `mappend` fromChar '(']
-            `mappend` b
-            `mappend` CL.sourceList [C.Chunk $ fromChar ')']
+        return $ ResponseSource s hs $ do
+            C.yield (C.Chunk $ copyByteString cb `mappend` fromChar '(')
+            b
+            C.yield (C.Chunk $ fromChar ')')
 
 changeVal :: Eq a
           => a

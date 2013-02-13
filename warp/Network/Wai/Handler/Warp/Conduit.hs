@@ -1,3 +1,5 @@
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE CPP #-}
 module Network.Wai.Handler.Warp.Conduit where
 
 import Control.Applicative
@@ -16,6 +18,9 @@ import qualified Data.Conduit.List as CL
 import qualified Data.IORef as I
 import Data.Word (Word, Word8)
 import Network.Wai.Handler.Warp.Types
+#if MIN_VERSION_conduit(1, 0, 0)
+import Data.Conduit.Internal (ConduitM)
+#endif
 
 ----------------------------------------------------------------
 
@@ -82,13 +87,17 @@ data ChunkState = NeedLen
 bsCRLF :: L.ByteString
 bsCRLF = pack "\r\n"
 
-chunkedSource :: MonadIO m
-              => I.IORef (ResumableSource m ByteString, ChunkState)
-              -> Source m ByteString
+chunkedSource :: I.IORef (ResumableSource (ResourceT IO) ByteString, ChunkState)
+              -> Source (ResourceT IO) ByteString
 chunkedSource ipair = do
     (src, mlen) <- liftIO $ I.readIORef ipair
     go src mlen
   where
+#if MIN_VERSION_conduit(1, 0, 0)
+    go' :: ResumableSource (ResourceT IO) ByteString
+        -> (Sink ByteString (ResourceT IO) (Word, ByteString) -> Sink ByteString (ResourceT IO) (Word, ByteString))
+        -> ConduitM k ByteString (ResourceT IO) ()
+#endif
     go' src front = do
         (src', (len, bs)) <- lift $ src $$++ front getLen
         let src''
@@ -96,8 +105,13 @@ chunkedSource ipair = do
                 | otherwise = fmapResume (yield bs >>) src'
         go src'' $ HaveLen len
 
-    go src NeedLen = go' src id
-    go src NeedLenNewline = go' src (CB.take 2 >>)
+#if MIN_VERSION_conduit(1, 0, 0)
+    go :: ResumableSource (ResourceT IO) ByteString
+       -> ChunkState
+       -> Source (ResourceT IO) ByteString
+#endif
+    go src NeedLen = go' src (\x -> x)
+    go src NeedLenNewline = go' src (\x -> CB.take 2 >> x)
     go src (HaveLen 0) = do
         -- Drop the final CRLF
         (src', ()) <- lift $ src $$++ do
@@ -156,5 +170,9 @@ isHexDigit w = w >= 48 && w <= 57
 
 ----------------------------------------------------------------
 
+#if MIN_VERSION_conduit(1, 0, 0)
+fmapResume :: (ConduitM () o1 m () -> ConduitM () o2 m ()) -> ResumableSource m o1 -> ResumableSource m o2
+#else
 fmapResume :: (Source m o1 -> Source m o2) -> ResumableSource m o1 -> ResumableSource m o2
+#endif
 fmapResume f (ResumableSource src m) = ResumableSource (f src) m

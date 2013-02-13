@@ -1,3 +1,4 @@
+{-# LANGUAGE ImpredicativeTypes #-}
 module Network.Wai.Handler.Warp.Settings where
 
 import Control.Exception

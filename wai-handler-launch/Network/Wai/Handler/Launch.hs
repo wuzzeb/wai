@@ -48,12 +48,10 @@ ping  var app req
                 let (s, hs, body) = responseSource res
                 let (isEnc, headers') = fixHeaders id hs
                 let headers'' = filter (\(x, _) -> x /= "content-length") headers'
-                let fixEnc src =
-                        if isEnc then
-                            src $= decompressFlush (WindowBits 31)
-                            else src
                 return $ ResponseSource s headers''
-                    $ fixEnc (body $= builderToByteStringFlush)
+                    $ (if isEnc
+                        then body $= builderToByteStringFlush $= decompressFlush (WindowBits 31)
+                        else body $= builderToByteStringFlush)
                     $= insideHead
                     $= CL.map (fmap fromByteString)
 

@@ -26,8 +26,8 @@ spec = describe "conduit" $ do
         rsrc' <- lift $ ibsDone ibs
         z <- rsrc' $$+- CL.consume
         lift $ S.concat z `shouldBe` S.pack [41..50]
-    it "chunkedSource" $ do
+    it "chunkedSource" $ runResourceT $ do
         (rsrc, ()) <- yield "5\r\n12345\r\n3\r\n678\r\n0\r\nBLAH" $$+ return ()
-        ref <- I.newIORef (rsrc, NeedLen)
+        ref <- lift $ I.newIORef (rsrc, NeedLen)
         x <- chunkedSource ref $$ CL.consume
-        S.concat x `shouldBe` "12345678"
+        lift $ S.concat x `shouldBe` "12345678"

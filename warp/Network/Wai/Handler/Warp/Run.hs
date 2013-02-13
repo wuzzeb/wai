@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RankNTypes #-}
 
 module Network.Wai.Handler.Warp.Run where
 
@@ -25,6 +26,9 @@ import Network.Wai.Handler.Warp.Settings
 import qualified Network.Wai.Handler.Warp.Timeout as T
 import Network.Wai.Handler.Warp.Types
 import Prelude hiding (catch)
+#if MIN_VERSION_conduit(1, 0, 0)
+import qualified Data.Conduit.Internal as CI
+#endif
 
 -- Sock.recv first tries to call recvfrom() optimistically.
 -- If EAGAIN returns, it polls incoming data with epoll/kqueue.
@@ -185,6 +189,8 @@ serveConnection settings cleaner port app conn remoteHost' =
     serveConnection' :: ResourceT IO ()
     serveConnection' = serveConnection'' $ connSource conn th
 
+    serveConnection'' :: Source (ResourceT IO) ByteString
+                      -> ResourceT IO ()
     serveConnection'' fromClient = do
         (env, getSource) <- parseRequest conn port remoteHost' fromClient
         case settingsIntercept settings env of
@@ -201,11 +207,25 @@ serveConnection settings cleaner port app conn remoteHost' =
                 requestBody env $$ CL.sinkNull
                 ResumableSource fromClient' _ <- liftIO getSource
 
+#if MIN_VERSION_conduit(1, 0, 0)
+                when keepAlive $ serveConnection''
+                               $ CI.ConduitM
+                               $ CI.pipeL (return ())
+                               $ CI.unConduitM fromClient'
+#else
                 when keepAlive $ serveConnection'' fromClient'
+#endif
             Just intercept -> do
                 liftIO $ T.pause th
                 ResumableSource fromClient' _ <- liftIO getSource
+#if MIN_VERSION_conduit(1, 0, 0)
+                let fromClient'' = CI.ConduitM
+                                 $ CI.pipeL (return ())
+                                 $ CI.unConduitM fromClient'
+                intercept fromClient'' conn
+#else
                 intercept fromClient' conn
+#endif
 
 connSource :: Connection -> T.Handle -> Source (ResourceT IO) ByteString
 connSource Connection { connRecv = recv } th = src

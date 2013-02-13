@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE CPP #-}
 module Network.Wai.Handler.WarpTLS
     ( TLSSettings (..)
     , runTLS
@@ -54,7 +55,13 @@ runTLSSocket tset set sock app = do
             (fromClient, firstBS) <- sourceSocket s C.$$+ CL.peek
             let toClient = sinkSocket s
             ifromClient <- I.newIORef fromClient
+#if MIN_VERSION_conduit(1, 0, 0)
+            let getNext :: C.Sink B.ByteString IO B.ByteString
+                        -> IO B.ByteString
+                getNext sink = do
+#else
             let getNext sink = do
+#endif
                     fromClient' <- I.readIORef ifromClient
                     (fromClient'', bs) <- fromClient' C.$$++ sink
                     I.writeIORef ifromClient fromClient''
@@ -67,7 +74,7 @@ runTLSSocket tset set sock app = do
                             { TLS.backendFlush = return ()
                             , TLS.backendClose = return ()
                             , TLS.backendSend = \bs -> C.yield bs C.$$ toClient
-                            , TLS.backendRecv = getNext . takeMost
+                            , TLS.backendRecv = \x -> getNext $ takeMost x
                             }
                         params
                         gen
