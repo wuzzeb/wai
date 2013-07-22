@@ -5,6 +5,7 @@ module Network.Wai.Handler.Warp.Run where
 
 import Control.Concurrent (threadDelay, forkIOWithUnmask)
 import Control.Exception
+import qualified Control.Concurrent as Conc (yield)
 import Control.Monad (forever, when, unless, void)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Trans.Class (lift)
@@ -255,6 +256,7 @@ serveConnection timeoutHandle settings cleaner port app conn remoteHost' =
                     liftIO $ T.resume th
                     sendResponse settings cleaner env conn res
 
+                liftIO $ Conc.yield
                 -- flush the rest of the request body
                 requestBody env $$ CL.sinkNull
                 ResumableSource fromClient' _ <- liftIO getSource
